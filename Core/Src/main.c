@@ -1,21 +1,21 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * <h2><center>&copy; Copyright (c) 2025 STMicroelectronics.
-  * All rights reserved.</center></h2>
-  *
-  * This software component is licensed by ST under BSD 3-Clause license,
-  * the "License"; You may not use this file except in compliance with the
-  * License. You may obtain a copy of the License at:
-  *                        opensource.org/licenses/BSD-3-Clause
-  *
-  ******************************************************************************
-  */
+ ******************************************************************************
+ * @file           : main.c
+ * @brief          : Main program body
+ ******************************************************************************
+ * @attention
+ *
+ * <h2><center>&copy; Copyright (c) 2025 STMicroelectronics.
+ * All rights reserved.</center></h2>
+ *
+ * This software component is licensed by ST under BSD 3-Clause license,
+ * the "License"; You may not use this file except in compliance with the
+ * License. You may obtain a copy of the License at:
+ *                        opensource.org/licenses/BSD-3-Clause
+ *
+ ******************************************************************************
+ */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -61,7 +61,58 @@ static void MX_USART3_SMARTCARD_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#include "stdio.h"
+#include "stdarg.h"
+#include "string.h"
 
+/* send str with value over UART */
+#define ATR_MAX_LEN 32
+
+static uint8_t atr_buf[ATR_MAX_LEN];
+static uint16_t atr_len = 0;
+
+void print_debug(const char *format, ...)
+{
+  uint8_t temp[256] = { 0 };
+
+  va_list args;
+  va_start(args, format);
+  vsprintf((char*)temp, format, args);
+  va_end(args);
+
+  while(HAL_UART_Transmit(&huart1, temp, strlen((char*)temp), 100) == HAL_BUSY);
+}
+
+static void SC_cold_reset(void)
+{
+  /* Assume VCC already powered */
+  HAL_GPIO_WritePin(SC_RST_GPIO_Port, SC_RST_Pin, GPIO_PIN_RESET); /* RST = Low (active) */
+
+  __HAL_RCC_USART3_CLK_ENABLE();  /* enable card clock first */
+  HAL_Delay(2); /* > 400 cycles = 0.11 ms, we use 2 ms for safety */
+
+  HAL_GPIO_WritePin(SC_RST_GPIO_Port, SC_RST_Pin, GPIO_PIN_SET); /* Release reset */
+}
+
+static HAL_StatusTypeDef SC_get_ATR(void)
+{
+  HAL_StatusTypeDef ret = HAL_SMARTCARD_Receive(&hsc3, atr_buf, ATR_MAX_LEN, 1500);
+  if(ret == HAL_OK)
+  {
+    atr_len = hsc3.RxXferSize - hsc3.RxXferCount;
+  }
+  return ret;
+}
+
+static void print_debug_bytes(const uint8_t *buf, uint16_t len)
+{
+  char hex[4];
+  for(uint16_t i = 0; i < len; ++i)
+  {
+    snprintf(hex, sizeof(hex), "%02X ", buf[i]);
+    HAL_UART_Transmit(&huart1, (uint8_t*)hex, 3, HAL_MAX_DELAY);
+  }
+}
 /* USER CODE END 0 */
 
 /**
@@ -96,13 +147,30 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART3_SMARTCARD_Init();
   /* USER CODE BEGIN 2 */
-
+  print_debug("\r\n=== SmartCard ATR demo ===\r\n");
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
+  while(1)
   {
+    if(HAL_GPIO_ReadPin(BUTTON_K1_GPIO_Port, BUTTON_K1_Pin) == GPIO_PIN_RESET)
+    {
+      SC_cold_reset();
+      print_debug("Cold reset done, waiting for ATR...\r\n");
+
+      if(SC_get_ATR() == HAL_OK)
+      {
+        print_debug("ATR length: %d bytes\r\nATR: ", atr_len);
+        print_debug_bytes(atr_buf, atr_len);
+        print_debug("\r\nDone.\r\n");
+      }
+      else
+      {
+        printf("ATR receive ERROR\r\n");
+      }
+    }
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -228,17 +296,17 @@ static void MX_USART3_SMARTCARD_Init(void)
 
   /* USER CODE END USART3_Init 1 */
   hsc3.Instance = USART3;
-  hsc3.Init.BaudRate = 115200;
+  hsc3.Init.BaudRate = 9600;
   hsc3.Init.WordLength = SMARTCARD_WORDLENGTH_9B;
   hsc3.Init.StopBits = SMARTCARD_STOPBITS_1_5;
   hsc3.Init.Parity = SMARTCARD_PARITY_EVEN;
   hsc3.Init.Mode = SMARTCARD_MODE_TX_RX;
   hsc3.Init.CLKPolarity = SMARTCARD_POLARITY_LOW;
   hsc3.Init.CLKPhase = SMARTCARD_PHASE_1EDGE;
-  hsc3.Init.CLKLastBit = SMARTCARD_LASTBIT_DISABLE;
-  hsc3.Init.Prescaler = 10;
-  hsc3.Init.GuardTime = 0;
-  hsc3.Init.NACKState = SMARTCARD_NACK_DISABLE;
+  hsc3.Init.CLKLastBit = SMARTCARD_LASTBIT_ENABLE;
+  hsc3.Init.Prescaler = 6;
+  hsc3.Init.GuardTime = 16;
+  hsc3.Init.NACKState = SMARTCARD_NACK_ENABLE;
   if (HAL_SMARTCARD_Init(&hsc3) != HAL_OK)
   {
     Error_Handler();
@@ -259,12 +327,19 @@ static void MX_GPIO_Init(void)
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(SC_RST_GPIO_Port, SC_RST_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pins : BUTTON_K1_Pin BUTTON_K0_Pin */
+  GPIO_InitStruct.Pin = BUTTON_K1_Pin|BUTTON_K0_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
   /*Configure GPIO pin : SC_RST_Pin */
   GPIO_InitStruct.Pin = SC_RST_Pin;
@@ -288,7 +363,7 @@ void Error_Handler(void)
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
-  while (1)
+  while(1)
   {
   }
   /* USER CODE END Error_Handler_Debug */
