@@ -66,7 +66,7 @@ static void MX_USART3_SMARTCARD_Init(void);
 #include "string.h"
 
 /* send str with value over UART */
-#define ATR_MAX_LEN 32
+#define ATR_MAX_LEN 20
 
 static uint8_t atr_buf[ATR_MAX_LEN];
 static uint16_t atr_len = 0;
@@ -96,13 +96,25 @@ static void SC_cold_reset(void)
 
 static HAL_StatusTypeDef SC_get_ATR(void)
 {
-  HAL_StatusTypeDef ret = HAL_SMARTCARD_Receive(&hsc3, atr_buf, ATR_MAX_LEN, 1500);
-  if(ret == HAL_OK)
+  atr_len = 0;
+  uint8_t byte;
+  HAL_StatusTypeDef ret;
+
+  while (atr_len < ATR_MAX_LEN)
   {
-    atr_len = hsc3.RxXferSize - hsc3.RxXferCount;
+    ret = HAL_SMARTCARD_Receive(&hsc3, &byte, 1, 100);
+    if (ret == HAL_OK)
+    {
+      atr_buf[atr_len++] = byte;
+    }
+    else
+    {
+      break; // таймаут = конец ATR
+    }
   }
-  return ret;
+  return (atr_len > 0) ? HAL_OK : HAL_TIMEOUT;
 }
+
 
 static void print_debug_bytes(const uint8_t *buf, uint16_t len)
 {
